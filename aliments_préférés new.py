@@ -1,78 +1,87 @@
+from rapidfuzz import process, fuzz
 import pandas as pd
 import matplotlib.pyplot as plt
-import re
-from multiprocessing import Pool
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import word_tokenize
 
-# Charger les données des commentaires
+# Télécharger les ressources de NLTK
+nltk.download('punkt')
+nltk.download('wordnet')
+nltk.download('stopwords')
+
+# Initialiser le lemmatiseur et les stopwords
+lemmatizer = WordNetLemmatizer()
+stop_words = set(stopwords.words('english'))
+
+# Fonction pour pré-traiter et normaliser les noms des plats
+def preprocess_dish_name(name):
+    name = name.lower().strip()
+    # Tokeniser le nom du plat
+    tokens = word_tokenize(name)
+    # Lemmatiser chaque mot (les convertir en singulier)
+    lemmatized_tokens = [lemmatizer.lemmatize(token) for token in tokens]
+    # Rejoindre les tokens en une chaîne de caractères
+    normalized_name = ' '.join(lemmatized_tokens)
+    return normalized_name
+
+# Charger les données des commentaires et des plats
 df_comments = pd.read_csv('query_result1.csv')
-
-# Charger les données des plats
 df_dishes = pd.read_csv('restaurant-menus_filtered.csv')
 
-# Créer une expression régulière pour rechercher les noms de plats
-dish_regex = r'\b(?:' + '|'.join(re.escape(name) for name in df_dishes['name']) + r')\b'
+# Prétraiter les noms des plats
+df_dishes['name'] = df_dishes['name'].apply(preprocess_dish_name)
+dish_names = df_dishes['name'].dropna().unique().tolist()
 
-# Fonction pour traiter un commentaire
-def process_comment(row):
+# Fonction pour trouver les correspondances floues
+def find_fuzzy_matches(comment, choices, score_cutoff=86):
+    # Utilisation de la fonction extract pour obtenir toutes les correspondances au-dessus du seuil
+    matches = process.extract(comment, choices, scorer=fuzz.WRatio, score_cutoff=score_cutoff, limit=None)
+    return [match[0] for match in matches]
+
+# Compter les occurrences et les notes des plats
+dish_counts = {}
+dish_ratings = {}
+
+# Parcourir chaque commentaire
+for _, row in df_comments.iterrows():
     stars = row['stars']
-    comment = row['text']
-    # Filtrer les commentaires contenant les noms de plats
-    matches = df_dishes[df_dishes['name'].str.contains(dish_regex, case=False)]
-    # Extraire les noms de plats de ces commentaires
-    matched_dishes = matches['name'].tolist()
-    return stars, matched_dishes
+    comment = row['text'].lower()
+    # Tokeniser et lemmatiser le commentaire
+    comment_tokens = word_tokenize(comment)
+    lemmatized_comment_tokens = [lemmatizer.lemmatize(token) for token in comment_tokens]
+    # Supprimer les stopwords
+    filtered_comment_tokens = [token for token in lemmatized_comment_tokens if token not in stop_words]
+    comment = ' '.join(filtered_comment_tokens)
+    # Trouver les correspondances
+    matches = find_fuzzy_matches(comment, dish_names)
+    for match in matches:
+        normalized_dish = preprocess_dish_name(match)
+        dish_counts[normalized_dish] = dish_counts.get(normalized_dish, 0) + 1
+        dish_ratings[normalized_dish] = dish_ratings.get(normalized_dish, 0) + stars
 
-# Point d'entrée principal
-if __name__ == '__main__':
-    # Diviser les commentaires en sous-ensembles
-    num_processes = 4
-    chunk_size = len(df_comments) // num_processes
-    chunks = [df_comments[i:i+chunk_size] for i in range(0, len(df_comments), chunk_size)]
+# Calculer la note moyenne pour chaque plat mentionné
+for dish in dish_ratings:
+    if dish_counts[dish]:
+        dish_ratings[dish] /= dish_counts[dish]
 
-    # Exécuter le traitement en parallèle
-    with Pool(num_processes) as pool:
-        results = pool.map(process_comment, chunks)
+# Trier les plats par nombre d'occurrences et obtenir les 20 premiers
+sorted_dish_counts = sorted(dish_counts.items(), key=lambda x: x[1], reverse=True)[:20]
+top_dishes, top_occurrences = zip(*sorted_dish_counts)
+top_ratings = [dish_ratings[dish] for dish in top_dishes]
 
-    # Initialiser un dictionnaire pour stocker le nombre total de commentaires par plat
-    dish_counts = {dish: 0 for dish in df_dishes['name']}
+# Générer l'histogramme
+plt.figure(figsize=(10, 8))
+bars = plt.barh(top_dishes, top_occurrences, color='skyblue')
+plt.xlabel('Nombre d\'occurrences')
+plt.ylabel('Plats')
+plt.title('Top 20 des plats les plus cités dans les commentaires avec leur note moyenne')
 
-    # Initialiser un dictionnaire pour stocker la note moyenne de chaque plat
-    dish_ratings = {dish: {'total_stars': 0, 'count': 0} for dish in df_dishes['name']}
+for bar, rating in zip(bars, top_ratings):
+    plt.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f'{rating:.2f}', va='center', ha='left')
 
-    # Mettre à jour les comptes de plats pour chaque nom de plat trouvé
-    for result in results:
-        for stars, matched_dishes in result:
-            for dish in matched_dishes:
-                dish_counts[dish] += 1
-                dish_ratings[dish]['total_stars'] += stars
-                dish_ratings[dish]['count'] += 1
-
-    # Calculer la note moyenne de chaque plat
-    for dish in dish_ratings:
-        if dish_ratings[dish]['count'] != 0:
-            dish_ratings[dish]['average_rating'] = dish_ratings[dish]['total_stars'] / dish_ratings[dish]['count']
-
-    # Trier les plats par nombre d'occurrences
-    sorted_dish_counts = sorted(dish_counts.items(), key=lambda x: x[1], reverse=True)
-
-    # Extraire les noms de plat et les occurrences pour les 20 premiers plats
-    top_dishes = [dish[0] for dish in sorted_dish_counts[:20]]
-    top_occurrences = [count[1] for count in sorted_dish_counts[:20]]
-    top_ratings = [dish_ratings[dish]['average_rating'] for dish in top_dishes]
-
-    # Affichage de l'histogramme horizontal
-    plt.figure(figsize=(10, 8))
-    bars = plt.barh(top_dishes, top_occurrences, color='skyblue')
-    plt.xlabel('Nombre d\'occurrences')
-    plt.ylabel('Plats')
-    plt.title('Nombre d\'occurrences des 20 plats les plus cités dans les commentaires avec leur note moyenne')
-
-    # Ajouter les notes au-dessus des barres
-    for bar, rating in zip(bars, top_ratings):
-        plt.text(bar.get_width(), bar.get_y() + bar.get_height()/2, f'{rating:.2f}', 
-                va='center', ha='left')
-
-    plt.gca().invert_yaxis()  # Inverser l'axe y pour afficher le plat le plus cité en haut
-    plt.tight_layout()  # Ajuster la disposition pour éviter que les étiquettes ne se chevauchent
-    plt.savefig('top_20_dishes_occurrences_with_ratings.png')  # Enregistrer l'image
-    plt.show()
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.savefig('top_20_dishes_occurrences_with_ratings.png')
+plt.show()
