@@ -8,7 +8,7 @@ import os
 import matplotlib.pyplot as plt
 
 # Chargement des données
-df = pd.read_csv('query_result.csv', parse_dates=['date'])
+df = pd.read_csv('query_result6.csv', parse_dates=['date'])
 
 def preprocess(text):
     # Ajout des stopwords personnalisés, y compris les déterminants et les chiffres en lettres

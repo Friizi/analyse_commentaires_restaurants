@@ -27,7 +27,7 @@ def preprocess_dish_name(name):
     return normalized_name
 
 # Charger les données des commentaires et des plats
-df_comments = pd.read_csv('query_result1.csv')
+df_comments = pd.read_csv('query_result7.csv')
 df_dishes = pd.read_csv('restaurant-menus_filtered.csv')
 
 # Prétraiter les noms des plats
@@ -83,5 +83,5 @@ for bar, rating in zip(bars, top_ratings):
 
 plt.gca().invert_yaxis()
 plt.tight_layout()
-plt.savefig('top_20_dishes_occurrences_with_ratings.png')
+plt.savefig('top_20_dishes_occurrences_with_ratings_7.png')
 plt.show()
